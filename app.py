@@ -7,6 +7,23 @@ import folium
 from streamlit_folium import st_folium
 
 # ----------------- HELPER FUNCTIONS -----------------
+def reverse_geocode(lat, lon):
+    url = f"https://geocoding-api.open-meteo.com/v1/reverse?latitude={lat}&longitude={lon}"
+    resp = requests.get(url).json()
+    if "results" in resp and len(resp["results"]) > 0:
+        place = resp["results"][0].get("name", "")
+        admin1 = resp["results"][0].get("admin1", "")
+        country = resp["results"][0].get("country", "")
+        return f"{place}, {admin1}, {country}"
+    return f"Lat {lat:.2f}, Lon {lon:.2f}"
+
+def geocode_zip(zip_code):
+    url = f"https://geocoding-api.open-meteo.com/v1/search?name={zip_code}&count=1"
+    resp = requests.get(url).json()
+    if "results" not in resp:
+        return None
+    return resp["results"][0]["latitude"], resp["results"][0]["longitude"], resp["results"][0]["name"]
+
 def get_weather_data(lat, lon, start_date, end_date):
     weather_url = (
         f"https://archive-api.open-meteo.com/v1/archive?"
@@ -47,13 +64,6 @@ def get_weather_data(lat, lon, start_date, end_date):
     )
     return df
 
-def geocode_zip(zip_code):
-    url = f"https://geocoding-api.open-meteo.com/v1/search?name={zip_code}&count=1"
-    resp = requests.get(url).json()
-    if "results" not in resp:
-        return None
-    return resp["results"][0]["latitude"], resp["results"][0]["longitude"], resp["results"][0]["name"]
-
 # ----------------- STREAMLIT APP -----------------
 st.title("Weather Data & Tree Shade Analysis")
 
@@ -62,7 +72,7 @@ with col1:
     zip_code = st.text_input("Enter ZIP Code (optional)", "20001")
 with col2:
     st.write("Or pick location on map")
-    # Default map location (Washington, DC)
+    # Default map
     m = folium.Map(location=[38.9, -77.0], zoom_start=5)
     st_data = st_folium(m, width=350, height=250)
 
@@ -74,13 +84,18 @@ if st.button("Get Weather Data"):
     # Priority: Map click > Zip code
     if st_data and st_data.get("last_clicked"):
         lat, lon = st_data["last_clicked"]["lat"], st_data["last_clicked"]["lng"]
-        location_name = f"Map-selected location ({lat:.2f}, {lon:.2f})"
+        location_name = reverse_geocode(lat, lon)
     else:
         geocode = geocode_zip(zip_code)
         if geocode is None:
             st.error("Invalid ZIP code or location not found.")
             st.stop()
         lat, lon, location_name = geocode
+
+    # Show map with pin for selected location
+    map_selected = folium.Map(location=[lat, lon], zoom_start=10)
+    folium.Marker([lat, lon], tooltip=location_name).add_to(map_selected)
+    st_folium(map_selected, width=700, height=400)
 
     df = get_weather_data(lat, lon, start_date, end_date)
     if df is None:
