@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # --- Streamlit UI ---
-st.title("Weather Data Viewer (ZIP Code)")
+st.title("Weather Data Viewer (ZIP Code) with Solar Power")
 
 zip_code = st.text_input("Enter ZIP Code:", "20001")
 start_date = st.date_input("Start date", datetime.now() - timedelta(days=30))
@@ -38,13 +38,18 @@ if st.button("Get Weather Data"):
         # --- Process Data ---
         df["time"] = pd.to_datetime(df["time"])
         df["cumulative_precipitation"] = df["precipitation_sum"].cumsum()
-        df["sunshine_duration_hr"] = df["sunshine_duration"] / 3600  # seconds → hours
+        df["sunshine_duration_hr"] = df["sunshine_duration"] / 3600  # sec → hr
         df["cumulative_sunshine_hr"] = df["sunshine_duration_hr"].cumsum()
+
+        # --- Solar energy (kWh/ft²) ---
+        df["daily_solar_kwh_ft2"] = df["sunshine_duration_hr"] * (1000 / 10.7639) / 1000
+        df["cumulative_solar_kwh_ft2"] = df["daily_solar_kwh_ft2"].cumsum()
 
         st.subheader(f"Weather Data for {location}")
         st.dataframe(df)
 
-        # 1. Daily temperature (line graph)
+        # --- Existing Graphs ---
+        # Daily temp
         fig1, ax1 = plt.subplots(figsize=(10, 5))
         ax1.plot(df["time"], df["temperature_2m_max"], label="Max Temp", color="red")
         ax1.plot(df["time"], df["temperature_2m_mean"], label="Mean Temp", color="orange")
@@ -54,9 +59,9 @@ if st.button("Get Weather Data"):
         ax1.legend()
         st.pyplot(fig1)
 
-        # 2. Daily precipitation (bar) with inches on secondary axis
+        # Daily precipitation dual axis
         fig2, ax2 = plt.subplots(figsize=(10, 4))
-        bars = ax2.bar(df["time"], df["precipitation_sum"], color="blue")
+        ax2.bar(df["time"], df["precipitation_sum"], color="blue")
         ax2.set_ylabel("Precipitation (mm)")
         ax2.set_title("Daily Precipitation")
         ax2_inch = ax2.twinx()
@@ -64,7 +69,7 @@ if st.button("Get Weather Data"):
         ax2_inch.set_ylim(ax2.get_ylim()[0] / 25.4, ax2.get_ylim()[1] / 25.4)
         st.pyplot(fig2)
 
-        # 3. Cumulative precipitation (line) with inches on secondary axis
+        # Cumulative precipitation dual axis
         fig3, ax3 = plt.subplots(figsize=(10, 4))
         ax3.plot(df["time"], df["cumulative_precipitation"], color="green", linewidth=2)
         ax3.set_ylabel("Cumulative Precipitation (mm)")
@@ -74,19 +79,33 @@ if st.button("Get Weather Data"):
         ax3_inch.set_ylim(ax3.get_ylim()[0] / 25.4, ax3.get_ylim()[1] / 25.4)
         st.pyplot(fig3)
 
-        # 4. Sunshine duration (daily bar + cumulative line with second axis)
+        # Sunshine duration dual axis (daily bar + cumulative line)
         fig4, ax4 = plt.subplots(figsize=(10, 4))
         ax4.bar(df["time"], df["sunshine_duration_hr"], color="gold", label="Daily Sunshine (hr)")
-        ax4.set_ylabel("Daily Sunshine Duration (hours)")
-        ax4.set_title("Daily & Cumulative Sunshine Duration")
+        ax4.set_ylabel("Daily Sunshine (hr)")
+        ax4.set_title("Daily & Cumulative Sunshine")
         ax4_line = ax4.twinx()
         ax4_line.plot(df["time"], df["cumulative_sunshine_hr"], color="red", linewidth=2, label="Cumulative Sunshine (hr)")
-        ax4_line.set_ylabel("Cumulative Sunshine (hours)")
-
-        # Add legends properly
+        ax4_line.set_ylabel("Cumulative Sunshine (hr)")
         lines_labels = [ax4.get_legend_handles_labels(), ax4_line.get_legend_handles_labels()]
         handles = lines_labels[0][0] + lines_labels[1][0]
         labels = lines_labels[0][1] + lines_labels[1][1]
         fig4.legend(handles, labels, loc="upper left")
-
         st.pyplot(fig4)
+
+        # Solar power dual axis (daily bar + cumulative line)
+        fig5, ax5 = plt.subplots(figsize=(10, 4))
+        ax5.bar(df["time"], df["daily_solar_kwh_ft2"], color="deepskyblue", label="Daily Solar Energy (kWh/ft²)")
+        ax5.set_ylabel("Daily Solar (kWh/ft²)")
+        ax5.set_title("Daily & Cumulative Solar Energy (per ft²)")
+        ax5_line = ax5.twinx()
+        ax5_line.plot(df["time"], df["cumulative_solar_kwh_ft2"], color="darkblue", linewidth=2,
+                      label="Cumulative Solar Energy (kWh/ft²)")
+        ax5_line.set_ylabel("Cumulative Solar (kWh/ft²)")
+
+        lines_labels = [ax5.get_legend_handles_labels(), ax5_line.get_legend_handles_labels()]
+        handles = lines_labels[0][0] + lines_labels[1][0]
+        labels = lines_labels[0][1] + lines_labels[1][1]
+        fig5.legend(handles, labels, loc="upper left")
+
+        st.pyplot(fig5)
