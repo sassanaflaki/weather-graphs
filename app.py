@@ -74,14 +74,22 @@ if st.button("Get Weather Data"):
         st.dataframe(df)
 
         # ----------------- GRAPHS -----------------
-        # Temperature
+        # Temperature (°C + °F)
         fig1, ax1 = plt.subplots(figsize=(10, 5))
-        ax1.plot(df["time"], df["temperature_2m_max"], label="Max Temp", color="red")
-        ax1.plot(df["time"], df["temperature_2m_mean"], label="Mean Temp", color="orange")
-        ax1.plot(df["time"], df["temperature_2m_min"], label="Min Temp", color="blue")
+        ax1.plot(df["time"], df["temperature_2m_max"], label="Max Temp (°C)", color="red")
+        ax1.plot(df["time"], df["temperature_2m_mean"], label="Mean Temp (°C)", color="orange")
+        ax1.plot(df["time"], df["temperature_2m_min"], label="Min Temp (°C)", color="blue")
         ax1.set_ylabel("Temperature (°C)")
-        ax1.set_title("Daily Temperatures")
-        ax1.legend()
+        ax1.set_title("Daily Temperatures (°C and °F)")
+
+        # Second axis in °F
+        ax1_f = ax1.twinx()
+        ax1_f.set_ylabel("Temperature (°F)")
+        # Sync °F axis range with °C
+        ymin, ymax = ax1.get_ylim()
+        ax1_f.set_ylim(ymin * 9/5 + 32, ymax * 9/5 + 32)
+
+        ax1.legend(loc="upper left")
         st.pyplot(fig1)
 
         # Daily precipitation (mm & inch)
