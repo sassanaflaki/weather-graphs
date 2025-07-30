@@ -1,21 +1,13 @@
 import streamlit as st
 import requests
 import pandas as pd
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
+import folium
+from streamlit_folium import st_folium
 
-# ----------------- FUNCTIONS -----------------
-def get_weather_data(zip_code, start_date, end_date):
-    # Geocode to get lat/lon
-    geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={zip_code}&count=1"
-    geo_resp = requests.get(geocode_url).json()
-    if "results" not in geo_resp:
-        return None, None, None
-    location = geo_resp["results"][0]["name"]
-    lat = geo_resp["results"][0]["latitude"]
-    lon = geo_resp["results"][0]["longitude"]
-
-    # Weather API request
+# ----------------- HELPER FUNCTIONS -----------------
+def get_weather_data(lat, lon, start_date, end_date):
     weather_url = (
         f"https://archive-api.open-meteo.com/v1/archive?"
         f"latitude={lat}&longitude={lon}"
@@ -26,105 +18,140 @@ def get_weather_data(zip_code, start_date, end_date):
     )
     weather_resp = requests.get(weather_url).json()
     if "daily" not in weather_resp:
-        return None, None, None
+        return None
 
     df = pd.DataFrame(weather_resp["daily"])
     df["time"] = pd.to_datetime(df["time"])
-
-    # Process metrics
     df["cumulative_precipitation"] = df["precipitation_sum"].cumsum()
-    df["sunshine_duration_hr"] = df["sunshine_duration"] / 3600  # seconds -> hours
+    df["sunshine_duration_hr"] = df["sunshine_duration"] / 3600
     df["cumulative_sunshine_hr"] = df["sunshine_duration_hr"].cumsum()
     df["daily_solar_kwh_ft2"] = df["sunshine_duration_hr"] * (1000 / 10.7639) / 1000
     df["cumulative_solar_kwh_ft2"] = df["daily_solar_kwh_ft2"].cumsum()
 
-    return df, location, (lat, lon)
+    # Tree shade index (with leaf factor)
+    def get_leaf_factor(date):
+        month = date.month
+        if month in [6, 7, 8]:     # Summer
+            return 1.0
+        elif month in [4, 5, 9]:   # Spring & early fall
+            return 0.7
+        else:                      # Winter
+            return 0.3
 
-def plot_temperature(df):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["time"], y=df["temperature_2m_max"], mode="lines+markers",
-                             name="Max Temp (°C)", line=dict(color="red")))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["temperature_2m_mean"], mode="lines+markers",
-                             name="Mean Temp (°C)", line=dict(color="orange")))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["temperature_2m_min"], mode="lines+markers",
-                             name="Min Temp (°C)", line=dict(color="blue")))
-    fig.update_layout(title="Daily Temperatures", yaxis_title="Temperature (°C)", xaxis_title="Date")
-    return fig
-
-def plot_precipitation(df):
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=df["time"], y=df["precipitation_sum"], name="Daily Precipitation (mm)", marker_color="blue", yaxis="y1"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["precipitation_sum"] / 25.4, name="Daily Precipitation (in)", yaxis="y2", mode="lines+markers", line=dict(color="darkblue")))
-    fig.update_layout(
-        title="Daily Precipitation (Dual Axis)",
-        xaxis=dict(title="Date"),
-        yaxis=dict(title="Precipitation (mm)", side="left"),
-        yaxis2=dict(title="Precipitation (inches)", overlaying="y", side="right")
+    df["leaf_factor"] = df["time"].apply(get_leaf_factor)
+    max_sun = df["sunshine_duration_hr"].max()
+    df["tree_shade_index"] = (
+        (df["sunshine_duration_hr"] / max_sun) *
+        ((100 - df["cloudcover_mean"]) / 100) *
+        df["leaf_factor"] * 100
     )
-    return fig
+    return df
 
-def plot_cumulative_precipitation(df):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["time"], y=df["cumulative_precipitation"], name="Cumulative Precip (mm)", line=dict(color="green"), yaxis="y1"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["cumulative_precipitation"]/25.4, name="Cumulative Precip (in)", line=dict(color="darkgreen", dash="dot"), yaxis="y2"))
-    fig.update_layout(
-        title="Cumulative Precipitation",
-        xaxis=dict(title="Date"),
-        yaxis=dict(title="Precipitation (mm)", side="left"),
-        yaxis2=dict(title="Precipitation (inches)", overlaying="y", side="right")
-    )
-    return fig
-
-def plot_sunshine(df):
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=df["time"], y=df["sunshine_duration_hr"], name="Daily Sunshine (hr)", marker_color="gold", yaxis="y1"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["cumulative_sunshine_hr"], name="Cumulative Sunshine (hr)",
-                             mode="lines+markers", line=dict(color="orange"), yaxis="y2"))
-    fig.update_layout(
-        title="Daily & Cumulative Sunshine",
-        xaxis=dict(title="Date"),
-        yaxis=dict(title="Daily Sunshine (hr)", side="left"),
-        yaxis2=dict(title="Cumulative Sunshine (hr)", overlaying="y", side="right")
-    )
-    return fig
-
-def plot_solar_energy(df):
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=df["time"], y=df["daily_solar_kwh_ft2"], name="Daily Solar Energy (kWh/ft²)", marker_color="deepskyblue", yaxis="y1"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["cumulative_solar_kwh_ft2"], name="Cumulative Solar Energy (kWh/ft²)",
-                             mode="lines+markers", line=dict(color="darkblue"), yaxis="y2"))
-    fig.update_layout(
-        title="Daily & Cumulative Solar Energy (per ft²)",
-        xaxis=dict(title="Date"),
-        yaxis=dict(title="Daily Solar (kWh/ft²)", side="left"),
-        yaxis2=dict(title="Cumulative Solar (kWh/ft²)", overlaying="y", side="right")
-    )
-    return fig
-
-def plot_cloud_cover(df):
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=df["time"], y=df["cloudcover_mean"], name="Cloud Cover (%)", marker_color="gray"))
-    fig.update_layout(title="Daily Mean Cloud Cover", xaxis_title="Date", yaxis_title="Cloud Cover (%)", yaxis=dict(range=[0, 100]))
-    return fig
+def geocode_zip(zip_code):
+    url = f"https://geocoding-api.open-meteo.com/v1/search?name={zip_code}&count=1"
+    resp = requests.get(url).json()
+    if "results" not in resp:
+        return None
+    return resp["results"][0]["latitude"], resp["results"][0]["longitude"], resp["results"][0]["name"]
 
 # ----------------- STREAMLIT APP -----------------
-st.title("Weather Data Analysis with Solar & Cloud Metrics")
+st.title("Weather Data & Tree Shade Analysis")
 
-zip_code = st.text_input("Enter ZIP Code:", "20001")
+col1, col2 = st.columns(2)
+with col1:
+    zip_code = st.text_input("Enter ZIP Code (optional)", "20001")
+with col2:
+    st.write("Or pick location on map")
+    # Default map location (Washington, DC)
+    m = folium.Map(location=[38.9, -77.0], zoom_start=5)
+    st_data = st_folium(m, width=350, height=250)
+
+# Date range
 start_date = st.date_input("Start date", datetime.now() - timedelta(days=30))
 end_date = st.date_input("End date", datetime.now())
 
 if st.button("Get Weather Data"):
-    df, location, coords = get_weather_data(zip_code, start_date, end_date)
-    if df is None:
-        st.error("Could not fetch weather data. Check ZIP code or date range.")
+    # Priority: Map click > Zip code
+    if st_data and st_data.get("last_clicked"):
+        lat, lon = st_data["last_clicked"]["lat"], st_data["last_clicked"]["lng"]
+        location_name = f"Map-selected location ({lat:.2f}, {lon:.2f})"
     else:
-        st.success(f"Weather data for {location} (Lat: {coords[0]:.2f}, Lon: {coords[1]:.2f})")
+        geocode = geocode_zip(zip_code)
+        if geocode is None:
+            st.error("Invalid ZIP code or location not found.")
+            st.stop()
+        lat, lon, location_name = geocode
+
+    df = get_weather_data(lat, lon, start_date, end_date)
+    if df is None:
+        st.error("Could not fetch weather data for this location.")
+    else:
+        st.success(f"Weather data for {location_name}")
         st.dataframe(df)
 
-        st.plotly_chart(plot_temperature(df), use_container_width=True)
-        st.plotly_chart(plot_precipitation(df), use_container_width=True)
-        st.plotly_chart(plot_cumulative_precipitation(df), use_container_width=True)
-        st.plotly_chart(plot_sunshine(df), use_container_width=True)
-        st.plotly_chart(plot_solar_energy(df), use_container_width=True)
-        st.plotly_chart(plot_cloud_cover(df), use_container_width=True)
+        # ----------------- GRAPHS -----------------
+        # Temperature
+        fig1, ax1 = plt.subplots(figsize=(10, 5))
+        ax1.plot(df["time"], df["temperature_2m_max"], label="Max Temp", color="red")
+        ax1.plot(df["time"], df["temperature_2m_mean"], label="Mean Temp", color="orange")
+        ax1.plot(df["time"], df["temperature_2m_min"], label="Min Temp", color="blue")
+        ax1.set_ylabel("Temperature (°C)")
+        ax1.set_title("Daily Temperatures")
+        ax1.legend()
+        st.pyplot(fig1)
+
+        # Daily precipitation (mm & inch)
+        fig2, ax2 = plt.subplots(figsize=(10, 4))
+        ax2.bar(df["time"], df["precipitation_sum"], color="blue")
+        ax2.set_ylabel("Precipitation (mm)")
+        ax2_inch = ax2.twinx()
+        ax2_inch.set_ylabel("Precipitation (inches)")
+        ax2_inch.set_ylim(ax2.get_ylim()[0]/25.4, ax2.get_ylim()[1]/25.4)
+        ax2.set_title("Daily Precipitation (mm & inches)")
+        st.pyplot(fig2)
+
+        # Cumulative precipitation (mm & inch)
+        fig3, ax3 = plt.subplots(figsize=(10, 4))
+        ax3.plot(df["time"], df["cumulative_precipitation"], color="green", linewidth=2)
+        ax3.set_ylabel("Cumulative Precipitation (mm)")
+        ax3_inch = ax3.twinx()
+        ax3_inch.set_ylabel("Cumulative Precipitation (inches)")
+        ax3_inch.set_ylim(ax3.get_ylim()[0]/25.4, ax3.get_ylim()[1]/25.4)
+        ax3.set_title("Cumulative Precipitation (mm & inches)")
+        st.pyplot(fig3)
+
+        # Sunshine duration (daily & cumulative)
+        fig4, ax4 = plt.subplots(figsize=(10, 4))
+        ax4.bar(df["time"], df["sunshine_duration_hr"], color="gold", label="Daily Sunshine (hr)")
+        ax4.set_ylabel("Daily Sunshine (hours)")
+        ax4_line = ax4.twinx()
+        ax4_line.plot(df["time"], df["cumulative_sunshine_hr"], color="red", linewidth=2, label="Cumulative Sunshine (hr)")
+        ax4_line.set_ylabel("Cumulative Sunshine (hours)")
+        ax4.set_title("Daily & Cumulative Sunshine Duration")
+        st.pyplot(fig4)
+
+        # Solar power (daily & cumulative)
+        fig5, ax5 = plt.subplots(figsize=(10, 4))
+        ax5.bar(df["time"], df["daily_solar_kwh_ft2"], color="deepskyblue", label="Daily Solar Energy (kWh/ft²)")
+        ax5.set_ylabel("Daily Solar (kWh/ft²)")
+        ax5_line = ax5.twinx()
+        ax5_line.plot(df["time"], df["cumulative_solar_kwh_ft2"], color="darkblue", linewidth=2, label="Cumulative Solar (kWh/ft²)")
+        ax5_line.set_ylabel("Cumulative Solar (kWh/ft²)")
+        ax5.set_title("Daily & Cumulative Solar Energy")
+        st.pyplot(fig5)
+
+        # Cloud cover
+        fig6, ax6 = plt.subplots(figsize=(10, 4))
+        ax6.bar(df["time"], df["cloudcover_mean"], color="gray")
+        ax6.set_ylabel("Cloud Cover (%)")
+        ax6.set_title("Daily Mean Cloud Cover")
+        ax6.set_ylim(0, 100)
+        st.pyplot(fig6)
+
+        # Tree Shade Index
+        fig7, ax7 = plt.subplots(figsize=(10, 4))
+        ax7.plot(df["time"], df["tree_shade_index"], color="darkgreen", linewidth=2)
+        ax7.set_ylabel("Tree Shade Index (0-100)")
+        ax7.set_title("Daily Tree Shade Growth / Intensity Index")
+        ax7.set_ylim(0, 100)
+        st.pyplot(fig7)
