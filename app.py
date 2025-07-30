@@ -39,13 +39,12 @@ if st.button("Get Weather Data"):
         df["time"] = pd.to_datetime(df["time"])
         df["cumulative_precipitation"] = df["precipitation_sum"].cumsum()
         df["sunshine_duration_hr"] = df["sunshine_duration"] / 3600  # seconds → hours
+        df["cumulative_sunshine_hr"] = df["sunshine_duration_hr"].cumsum()
 
         st.subheader(f"Weather Data for {location}")
         st.dataframe(df)
 
-        # ----------------- CHARTS -----------------
-
-        # 1. Line chart for daily max, mean, min temperature
+        # 1. Daily temperature (line graph)
         fig1, ax1 = plt.subplots(figsize=(10, 5))
         ax1.plot(df["time"], df["temperature_2m_max"], label="Max Temp", color="red")
         ax1.plot(df["time"], df["temperature_2m_mean"], label="Mean Temp", color="orange")
@@ -55,23 +54,39 @@ if st.button("Get Weather Data"):
         ax1.legend()
         st.pyplot(fig1)
 
-        # 2. Bar chart for daily precipitation
+        # 2. Daily precipitation (bar) with inches on secondary axis
         fig2, ax2 = plt.subplots(figsize=(10, 4))
-        ax2.bar(df["time"], df["precipitation_sum"], color="blue")
+        bars = ax2.bar(df["time"], df["precipitation_sum"], color="blue")
         ax2.set_ylabel("Precipitation (mm)")
         ax2.set_title("Daily Precipitation")
+        ax2_inch = ax2.twinx()
+        ax2_inch.set_ylabel("Precipitation (inches)")
+        ax2_inch.set_ylim(ax2.get_ylim()[0] / 25.4, ax2.get_ylim()[1] / 25.4)
         st.pyplot(fig2)
 
-        # 3. Line chart for cumulative precipitation
+        # 3. Cumulative precipitation (line) with inches on secondary axis
         fig3, ax3 = plt.subplots(figsize=(10, 4))
         ax3.plot(df["time"], df["cumulative_precipitation"], color="green", linewidth=2)
         ax3.set_ylabel("Cumulative Precipitation (mm)")
         ax3.set_title("Cumulative Precipitation")
+        ax3_inch = ax3.twinx()
+        ax3_inch.set_ylabel("Cumulative Precipitation (inches)")
+        ax3_inch.set_ylim(ax3.get_ylim()[0] / 25.4, ax3.get_ylim()[1] / 25.4)
         st.pyplot(fig3)
 
-        # 4. Bar chart for daily sunshine duration (hours)
+        # 4. Sunshine duration (daily bar + cumulative line with second axis)
         fig4, ax4 = plt.subplots(figsize=(10, 4))
-        ax4.bar(df["time"], df["sunshine_duration_hr"], color="gold")
-        ax4.set_ylabel("Sunshine Duration (hrs)")
-        ax4.set_title("Daily Sunshine Duration")
+        ax4.bar(df["time"], df["sunshine_duration_hr"], color="gold", label="Daily Sunshine (hr)")
+        ax4.set_ylabel("Daily Sunshine Duration (hours)")
+        ax4.set_title("Daily & Cumulative Sunshine Duration")
+        ax4_line = ax4.twinx()
+        ax4_line.plot(df["time"], df["cumulative_sunshine_hr"], color="red", linewidth=2, label="Cumulative Sunshine (hr)")
+        ax4_line.set_ylabel("Cumulative Sunshine (hours)")
+
+        # Add legends properly
+        lines_labels = [ax4.get_legend_handles_labels(), ax4_line.get_legend_handles_labels()]
+        handles = lines_labels[0][0] + lines_labels[1][0]
+        labels = lines_labels[0][1] + lines_labels[1][1]
+        fig4.legend(handles, labels, loc="upper left")
+
         st.pyplot(fig4)
